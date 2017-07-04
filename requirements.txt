@@ -1,1 +1,2 @@
 ciscoconfparse==1.2.47
+yamllint==1.8.1
