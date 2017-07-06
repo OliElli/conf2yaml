@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 from ciscoconfparse import CiscoConfParse
+from os import walk, makedirs, listdir
+from os.path import isfile, join, splitext, exists
 import re
 import yaml
-
-# Load in source configuration file
-config = 'configurations/ios/tests1.svn'
-p = CiscoConfParse(config)
 
 def match_collection(collection, str):
     for j in collection.children:
@@ -29,203 +27,212 @@ def search_single(i, str, capture):
     if match:
         return (match.group(1) if capture else "True")
 
-# Create interfaces object
-interfaces = p.find_objects(r'interface')
+# parse takes a filename and subdirectory and creates the corresponding yaml/sdir/filename.yml file
+def parse(filename, sdir):
+    p = CiscoConfParse('configurations/' + sdir + '/' + filename)   # Load in source configuration file
+    interfaces = p.find_objects(r'interface')                       # Create interfaces object
+    output_config = {}                                              # Create master dict for output data
+    output_config['interfaces'] = []                                # Create list of interfaces
+    
+    if interfaces:
+        for i in interfaces:
+            interface_dict = {}
 
-# Create master dict for output data
-output_config = {}
+            # Insert interface name
+            interface_name = search_single(i, '^interface (\S+)$', True)
+            if interface_name:
+                interface_dict['name'] = interface_name
 
-# Create list of interfaces
-output_config['interfaces'] = []
+            # switchport
+            switchport = match_collection(i, '^ switchport.*$')
+            if switchport:
+                # Create switchport sub-dict
+                interface_dict['switchport'] = {}
 
-# Iterate interfaces
-if interfaces:
-    for i in interfaces:
-        # Create interface dict
-        interface_dict = {}
+                for j in i.children:
+                    # access vlan
+                    access_vlan = match_single(j, '^ switchport access vlan (\S+)$', True)
+                    if access_vlan:
+                        interface_dict['switchport']['access_vlan'] = str(access_vlan)
 
-        # Insert interface name
-        interface_name = search_single(i, '^interface (\S+)$', True)
-        if interface_name:
-            interface_dict['name'] = interface_name
+                    # switchport mode
+                    mode = match_single(j, '^ switchport mode (\S+)$', True)
+                    if mode:
+                        interface_dict['switchport']['mode'] = mode
 
-        # switchport
-        switchport = match_collection(i, '^ switchport.*$')
-        if switchport:
-            # Create switchport sub-dict
-            interface_dict['switchport'] = {}
+                    # port-security
+                    port_sec = match_single(j, '^ switchport port-security$', False)
+                    if port_sec:
+                        interface_dict['switchport']['mode'] = 'True'
 
+                    # switchport trunk
+                    switchport_trunk = match_collection(i, '^ switchport trunk.*$')
+                    if switchport_trunk:
+                        interface_dict['switchport']['trunk'] = {}
+
+                for j in i.children:
+                    # native vlan
+                    native_vlan = match_single(j, '^ switchport trunk native vlan (\S+)$', True)
+                    if native_vlan:
+                        interface_dict['switchport']['trunk']['native_vlan'] = native_vlan
+                    # allowed vlan
+                    allowed_vlan = match_single(j, '^ switchport trunk allowed vlan (\S+)$', True)
+                    if allowed_vlan:
+                        interface_dict['switchport']['trunk']['allowed_vlan'] = allowed_vlan
+
+            # spanning-tree
+            spanning_tree = match_collection(i, '^ spanning-tree.*$')
+            if spanning_tree:
+                # Create spanning-tree sub-dict
+                interface_dict['spanning_tree'] = {}
+
+                for j in i.children:
+                    # portfast
+                    portfast = match_single(j, '^ spanning-tree portfast$', False)
+                    if portfast:
+                        interface_dict['spanning_tree']['portfast'] = portfast
+                    # guard_root
+                    guard_root = match_single(j, '^ spanning-tree guard root$', False)
+                    if guard_root:
+                        interface_dict['spanning_tree']['guard_root'] = guard_root
+
+            # ip
+            ip = match_collection(i, '^ .* ip .*$')
+            if ip:
+                # Create ip sub-dict
+                interface_dict['ip'] = {}
+
+                for j in i.children:
+                    # no ip address
+                    no_ip = match_single(j, '^ no ip address$', False)
+                    if no_ip:
+                        interface_dict['ip']['ip_address_disable'] = no_ip
+                    # no ip route cache
+                    no_route_cache = match_single(j, '^ no ip route-cache$', False)
+                    if no_route_cache:
+                        interface_dict['ip']['route_cache_disable'] = no_route_cache
+                    # ip address
+                    ip_address = match_single(j, '^ ip address (.*)$', True)
+                    if ip_address:
+                        interface_dict['ip']['address'] = ip_address
+                    # ip access_group
+                    access_group = match_single(j, '^ ip access-group (\S+) (\S+)$', False)
+                    if access_group:
+                        interface_dict['ip']['access_group'] = access_group
+                    # ip dhcp snooping trust
+                    dhcp_snooping_trust = match_single(j, '^ ip dhcp snooping trust$', False)
+                    if dhcp_snooping_trust:
+                        interface_dict['ip']['dhcp_snooping_trust'] = dhcp_snooping_trust
+
+            # misc
             for j in i.children:
-                # access vlan
-                access_vlan = match_single(j, '^ switchport access vlan (\S+)$', True)
-                if access_vlan:
-                    interface_dict['switchport']['access_vlan'] = str(access_vlan)
+                # power inline police
+                power_inline_police = match_single(j, '^ power inline police$', False)
+                if power_inline_police:
+                    interface_dict['power_inline_police'] = power_inline_police
+                cdp_disable = match_single(j, '^ no cdp enable$', False)
+                if cdp_disable:
+                    interface_dict['cdp_disable'] = cdp_disable
+                shutdown = match_single(j, '^ shutdown$', False)
+                if shutdown:
+                    interface_dict['shutdown'] = shutdown
 
-                # switchport mode
-                mode = match_single(j, '^ switchport mode (\S+)$', True)
-                if mode:
-                    interface_dict['switchport']['mode'] = mode
+            # Append the completed interface dict to the interfaces list
+            output_config['interfaces'].append(interface_dict)
 
-                # port-security
-                port_sec = match_single(j, '^ switchport port-security$', False)
-                if port_sec:
-                    interface_dict['switchport']['mode'] = 'True'
+    # IP Config Elements
+    ip_config = p.find_objects(r'ip')
+    if ip_config:
+        # Create ip dict
+        output_config['ip'] = {}
+        for i in ip_config:
+            # ip dhcp snooping
+            dhcp_snooping = match_single(i, '^ip dhcp snooping$', False)
+            if dhcp_snooping:
+                output_config['ip']['dhcp_snooping'] = dhcp_snooping
+            default_gateway = match_single(i, '^ip default-gateway (\S+)$', True)
+            if default_gateway:
+                output_config['ip']['default_gateway'] = default_gateway
 
-                # switchport trunk
-                switchport_trunk = match_collection(i, '^ switchport trunk.*$')
-                if switchport_trunk:
-                    interface_dict['switchport']['trunk'] = {}
+    # Banner
+    banner = p.find_blocks(r'banner')
+    if banner:
+        # Create banner dict
+        output_config['banner'] = []
 
-            for j in i.children:
-                # native vlan
-                native_vlan = match_single(j, '^ switchport trunk native vlan (\S+)$', True)
-                if native_vlan:
-                    interface_dict['switchport']['trunk']['native_vlan'] = native_vlan
-                # allowed vlan
-                allowed_vlan = match_single(j, '^ switchport trunk allowed vlan (\S+)$', True)
-                if allowed_vlan:
-                    interface_dict['switchport']['trunk']['allowed_vlan'] = allowed_vlan
+        for i in banner:
+            match = re.search('^banner motd (.*)$', i)
+            if match:
+                output_config['banner'].append(match.group(1))
+            else:
+                output_config['banner'].append(i)
 
-        # spanning-tree
-        spanning_tree = match_collection(i, '^ spanning-tree.*$')
-        if spanning_tree:
-            # Create spanning-tree sub-dict
-            interface_dict['spanning_tree'] = {}
+    # acl
+    acl = p.find_blocks(r'access-list')
+    if acl:
+        acl_line = search_collection(acl, '^access-list 10 permit (172.*)$', True)
+        if acl_line:
+            output_config['acl'] = acl_line
 
-            for j in i.children:
-                # portfast
-                portfast = match_single(j, '^ spanning-tree portfast$', False)
-                if portfast:
-                    interface_dict['spanning_tree']['portfast'] = portfast
-                # guard_root
-                guard_root = match_single(j, '^ spanning-tree guard root$', False)
-                if guard_root:
-                    interface_dict['spanning_tree']['guard_root'] = guard_root
+    # snmp-server
+    snmp = p.find_blocks(r'snmp-server')
+    if snmp:
+        # Create snmp dict
+        output_config['snmp'] = {}
+        snmp_location = search_collection(snmp, '^snmp-server location (.*)$', True)
+        if snmp_location:
+            output_config['snmp']['location'] = snmp_location
+        snmp_contact = search_collection(snmp, '^snmp-server contact (.*)$', True)
+        if snmp_contact:
+            output_config['snmp']['contact'] = snmp_contact
 
-        # ip
-        ip = match_collection(i, '^ .* ip .*$')
-        if ip:
-            # Create ip sub-dict
-            interface_dict['ip'] = {}
+    # vtp
+    vtp = p.find_blocks(r'vtp')
+    if vtp:
+        vtp_mode = search_collection(vtp, 'vtp mode (\S+)', True)
+        if vtp_mode:
+            output_config['vtp_mode'] = vtp_mode
 
-            for j in i.children:
-                # no ip address
-                no_ip = match_single(j, '^ no ip address$', False)
-                if no_ip:
-                    interface_dict['ip']['ip_address_disable'] = no_ip
-                # no ip route cache
-                no_route_cache = match_single(j, '^ no ip route-cache$', False)
-                if no_route_cache:
-                    interface_dict['ip']['route_cache_disable'] = no_route_cache
-                # ip address
-                ip_address = match_single(j, '^ ip address (.*)$', True)
-                if ip_address:
-                    interface_dict['ip']['address'] = ip_address
-                # ip access_group
-                access_group = match_single(j, '^ ip access-group (\S+) (\S+)$', False)
-                if access_group:
-                    interface_dict['ip']['access_group'] = access_group
-                # ip dhcp snooping trust
-                dhcp_snooping_trust = match_single(j, '^ ip dhcp snooping trust$', False)
-                if dhcp_snooping_trust:
-                    interface_dict['ip']['dhcp_snooping_trust'] = dhcp_snooping_trust
+    # vlans
+    vlans = p.find_objects('^vlan')
+    if vlans:
+        output_config['vlans'] = []
+        for i in vlans:
+            match = re.match('^vlan (\d.*)$', i.text)
+            if match:
+                # Create vlans dict
+                vlan_output = {}
+                vlan_output['number'] = match.group(1)
+                match2 = i.re_search_children(r" name ")
+                if match2:
+                    for j in match2:
+                        match3 = re.match('^ name (\S+)$', j.text)
+                        if match3:
+                            vlan_output['name'] = match3.group(1)
+                # Append the completed vlans dict to the output_config list
+                output_config['vlans'].append(vlan_output)
 
-        # misc
-        for j in i.children:
-            # power inline police
-            power_inline_police = match_single(j, '^ power inline police$', False)
-            if power_inline_police:
-                interface_dict['power_inline_police'] = power_inline_police
-            cdp_disable = match_single(j, '^ no cdp enable$', False)
-            if cdp_disable:
-                interface_dict['cdp_disable'] = cdp_disable
-            shutdown = match_single(j, '^ shutdown$', False)
-            if shutdown:
-                interface_dict['shutdown'] = shutdown
+    # Screen output
+    print
+    print(sdir + '/' + filename + ' YAML Output:')
+    print
+    print yaml.dump(output_config, default_flow_style=False, explicit_start=True)
 
-        # Append the completed interface dict to the interfaces list
-        output_config['interfaces'].append(interface_dict)
+    # Make sure the directory we're trying to write to exists. Create it if it doesn't
+    out_path = 'yaml/' + sdir + '/'
+    if not exists(out_path):
+        makedirs(out_path)
+    
+    # Write foo.yml to the subdir in yaml/ that corresponds to the dir where we got the input file in configurations/
+    with open(out_path + splitext(filename)[0] + '.yml', 'w') as outfile:
+        yaml.dump(output_config, outfile, default_flow_style=False, explicit_start=True)
 
-# IP Config Elements
-ip_config = p.find_objects(r'ip')
-if ip_config:
-    # Create ip dict
-    output_config['ip'] = {}
-    for i in ip_config:
-        # ip dhcp snooping
-        dhcp_snooping = match_single(i, '^ip dhcp snooping$', False)
-        if dhcp_snooping:
-            output_config['ip']['dhcp_snooping'] = dhcp_snooping
-        default_gateway = match_single(i, '^ip default-gateway (\S+)$', True)
-        if default_gateway:
-            output_config['ip']['default_gateway'] = default_gateway
+root_path = 'configurations/'           # specify root directory 
+subdirs = walk(root_path).next()[1]     # obtain all subdirectories
+subdirs.append('');                     # add root directory
 
-# Banner
-banner = p.find_blocks(r'banner')
-if banner:
-    # Create banner dict
-    output_config['banner'] = []
-
-    for i in banner:
-        match = re.search('^banner motd (.*)$', i)
-        if match:
-            output_config['banner'].append(match.group(1))
-        else:
-            output_config['banner'].append(i)
-
-# acl
-acl = p.find_blocks(r'access-list')
-if acl:
-    acl_line = search_collection(acl, '^access-list 10 permit (172.*)$', True)
-    if acl_line:
-        output_config['acl'] = acl_line
-
-# snmp-server
-snmp = p.find_blocks(r'snmp-server')
-if snmp:
-    # Create snmp dict
-    output_config['snmp'] = {}
-    snmp_location = search_collection(snmp, '^snmp-server location (.*)$', True)
-    if snmp_location:
-        output_config['snmp']['location'] = snmp_location
-    snmp_contact = search_collection(snmp, '^snmp-server contact (.*)$', True)
-    if snmp_contact:
-        output_config['snmp']['contact'] = snmp_contact
-
-# vtp
-vtp = p.find_blocks(r'vtp')
-if vtp:
-    vtp_mode = search_collection(vtp, 'vtp mode (\S+)', True)
-    if vtp_mode:
-        output_config['vtp_mode'] = vtp_mode
-
-# vlans
-vlans = p.find_objects('^vlan')
-if vlans:
-    output_config['vlans'] = []
-    for i in vlans:
-        match = re.match('^vlan (\d.*)$', i.text)
-        if match:
-            # Create vlans dict
-            vlan_output = {}
-            vlan_output['number'] = match.group(1)
-            match2 = i.re_search_children(r" name ")
-            if match2:
-                for j in match2:
-                    match3 = re.match('^ name (\S+)$', j.text)
-                    if match3:
-                        vlan_output['name'] = match3.group(1)
-            # Append the completed vlans dict to the output_config list
-            output_config['vlans'].append(vlan_output)
-
-# Screen output
-#print('Raw Data:')
-#print(output_config)
-print
-print('YAML:')
-print
-print yaml.dump(output_config, default_flow_style=False, explicit_start=True)
-
-# File output
-with open('yaml/data.yml', 'w') as outfile:
-    yaml.dump(output_config, outfile, default_flow_style=False, explicit_start=True)
+for s in subdirs:
+    files = [f for f in listdir(root_path + s) if isfile(join(root_path + s, f))]
+    for f in files:
+        if f != '.gitignore':           # let's not try to parse gitignores
+            parse(f, s)
