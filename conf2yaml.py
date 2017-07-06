@@ -6,123 +6,82 @@ import re
 config = 'configurations/tests1.svn'
 p = CiscoConfParse(config)
 
-print('---')
+print('---') # Mark beginning of output
+
+def match_collection(collection, str, output):
+    for j in collection.children:
+        if re.match(str, j.text):
+            print(output)
+            break
+
+def match_single(j, str, output, addGroup, suffix=""):
+    match = re.match(str, j.text)
+    if match:
+        if not isinstance(output, list):
+            print(output + (match.group(1) if addGroup else "") + suffix)
+        else:
+            print(output[0] + match.group(1) + output[1] + match.group(2))
+        
+def search_collection(collection, str, output, addGroup, suffix=""):
+    for j in collection:
+        match = re.search(str, j)
+        if match:
+            print(output + (match.group(1) if addGroup else "") + suffix)
+            
+def search_single(i, str, output, addGroup, suffix=""):
+    match = re.search(str, i.text)
+    if match:
+        print(output + (match.group(1) if addGroup else "") + suffix)
 
 # Create interfaces object
 ints = p.find_objects(r'interface')
-
+        
 # Iterate interfaces
 if ints:
     print('interfaces:')
     for i in ints:
-        match = re.search('^interface (\S+)$',i.text)
-        print('  - name ' + match.group(1) + ':')
+        search_single(i, '^interface (\S+)$', '  - name ', True, ':')
+        match_collection(i, '^ switchport.*$', '    switchport:')                                   # switchport
+        
+        for j in i.children:
+            match_single(j, '^ switchport access vlan (\S+)$', '      access_vlan: ', True)         # access vlan
+            match_single(j, '^ switchport mode (\S+)$', '      mode: ', True)                       # switchport mode
+            match_single(j, '^ switchport port-security$', '      port_security: "True"', False)    # port security
+                
+        match_collection(i, '^ switchport trunk.*$', '      trunk:')                                # switchport trunk
+            
+        for j in i.children:
+            match_single(j, '^ switchport trunk native vlan (\S+)$', '        native_vlan: ', True)
+            match_single(j, '^ switchport trunk allowed vlan (\S+)$', '        allowed_vlan: ', True)
 
-        # switchport
+        match_collection(i, '^ spanning-tree.*$', '    spanning_tree:')                             # spanning-tree
+        
         for j in i.children:
-            match = re.match('^ switchport.*$',j.text)
-            if match:
-                print('    switchport:')
-                break
-        for j in i.children:
-            # access vlan
-            match = re.match('^ switchport access vlan (\S+)$',j.text)
-            if match:
-                print('      access_vlan: ' + match.group(1))
-            # switchport mode
-            match = re.match('^ switchport mode (\S+)$',j.text)
-            if match:
-                print('      mode: ' + match.group(1))
-            # port security
-            match = re.match('^ switchport port-security$',j.text)
-            if match:
-                print('      port_security: "True"')
-        # switchport trunk
-        for j in i.children:
-            match = re.match('^ switchport trunk.*$',j.text)
-            if match:
-                print('      trunk:')
-                break
-        for j in i.children:
-            match = re.match('^ switchport trunk native vlan (\S+)$',j.text)
-            if match:
-                print('        native_vlan: ' + match.group(1))
-            match = re.match('^ switchport trunk allowed vlan (\S+)$',j.text)
-            if match:
-                print('        allowed_vlan: ' + match.group(1))
+            match_single(j, '^ spanning-tree portfast$', '      portfast: "True"', False)           # spanning-tree portfast
+            match_single(j, '^ spanning-tree guard root$', '      guard_root: "True"', False)       # spanning-tree guard root
 
-        # spanning-tree
+        match_collection(i, '^ .* ip .*$', '    ip:')                                               # ip
+        
         for j in i.children:
-            match = re.match('^ spanning-tree.*$',j.text)
-            if match:
-                print('    spanning_tree:')
-                break
-        for j in i.children:
-            # spanning-tree portfast
-            match = re.match('^ spanning-tree portfast$',j.text)
-            if match:
-                print('      portfast: "True"')
-            # spanning-tree guard root
-            match = re.match('^ spanning-tree guard root$',j.text)
-            if match:
-                print('      guard_root: "True"')
-
-        # ip
-        for j in i.children:
-            match = re.match('^ .* ip .*$',j.text)
-            if match:
-                print('    ip:')
-                break
-        for j in i.children:
-            # no ip address
-            match = re.match('^ no ip address$',j.text)
-            if match:
-                print('      ip_address_disable: "True"')
-            #  no ip route-cache
-            match = re.match('^ no ip route-cache$',j.text)
-            if match:
-                print('      route_cache_disable: "True"')
-            #  ip address
-            match = re.match('^ ip address (.*)$',j.text)
-            if match:
-                print('      address: ' + match.group(1))
-            #  ip access-group
-            match = re.match('^ ip access-group (\S+) (\S+)$',j.text)
-            if match:
-                print('      access_group:\n        acl_id: ' + match.group(1) + '\n        direction: ' + match.group(2))
-            #  ip access-group
-            match = re.match('^ ip dhcp snooping trust$',j.text)
-            if match:
-                print('      dhcp_snooping_trust: "True"')
+            match_single(j, '^ no ip address$', '      ip_address_disable: "True"', False)                                                  # no ip address
+            match_single(j, '^ no ip route-cache$', '      route_cache_disable: "True"', False)                                             # no ip route-cache
+            match_single(j, '^ ip address (.*)$', '      address: ', True)                                                                  # ip address
+            match_single(j, '^ ip access-group (\S+) (\S+)$', ['      access_group:\n        acl_id: ', '\n        direction: '], False, "")# ip access-group
+            match_single(j, '^ ip dhcp snooping trust$', '      dhcp_snooping_trust: "True"', False)                                        # ip access-group
 
         # misc
         for j in i.children:
-            # power inline police
-            match = re.match('^ power inline police$',j.text)
-            if match:
-                print('    power_inline_police: "True"')
-            # no cdp enable
-            match = re.match('^ no cdp enable$',j.text)
-            if match:
-                print('    cdp_disable: "True"')
-            # shutdown
-            match = re.match('^ shutdown$',j.text)
-            if match:
-                print('    shutdown: "True"')
+            match_single(j, '^ power inline police$', '    power_inline_police: "True"', False)     # power inline police
+            match_single(j, '^ no cdp enable$', '    cdp_disable: "True"', False)                   # no cdp enable
+            match_single(j, '^ shutdown$', '    shutdown: "True"', False)                           # shutdown
 
 # IP Config Elements
 ip_config = p.find_objects(r'ip')
 if ip_config:
     print('ip:')
-    for i in ip_config:
-        # ip dhcp snooping
-        match = re.search('^ip dhcp snooping$',i.text)
-        if match:
-            print('  dhcp_snooping: "True"')
-        # ip default gateway
-        match = re.search('^ip default-gateway (\S+)$',i.text)
-        if match:
-            print('  default_gateway: ' + match.group(1))
+    for j in ip_config:
+        match_single(j, '^ip dhcp snooping$', '  dhcp_snooping: "True"', False)                     # ip dhcp snooping
+        match_single(j, '^ip default-gateway (\S+)$', '  default_gateway: ', True)                  # ip default gateway
 
 # Banner
 banner = p.find_blocks(r'banner')
@@ -140,44 +99,29 @@ if banner:
 acl = p.find_blocks(r'access-list')
 if acl:
     print('acl:')
-    for i in acl:
-        match = re.search('^access-list 10 permit (172.*)$',i)
-        if match:
-            print('  - ' + match.group(1))
+    search_collection(acl, '^access-list 10 permit (172.*)$', '  - ', True)
 
 # snmp-server
 snmp = p.find_blocks(r'snmp-server')
 if snmp:
     print('snmp:')
-    for i in snmp:
-        match = re.search('^snmp-server location (.*)$',i)
-        if match:
-            print('  location: ' + match.group(1))
-    for i in snmp:
-        match = re.search('^snmp-server contact (.*)$',i)
-        if match:
-            print('  contact: ' + match.group(1))
+    search_collection(snmp, '^snmp-server location (.*)$', '  location: ', True)
+    search_collection(snmp, '^snmp-server contact (.*)$', '  contact: ', True)
 
 # vtp
 vtp = p.find_blocks(r'vtp')
 if vtp:
     print('vtp:')
-    for i in vtp:
-        match = re.search('vtp mode (\S+)',i)
-        if match:
-            print('  mode: "' + match.group(1) + '"')
+    search_collection(vtp, 'vtp mode (\S+)', '  mode: "', True, '"')
 
 # vlans
 vlans = p.find_objects('^vlan')
 if vlans:
     print('vlans:')
     for i in vlans:
-        match = re.search('^vlan (\d.*)$',i.text)
-        if match:
-            print('  - number: ' + match.group(1))
+        search_single(i, '^vlan (\d.*)$', '  - number: ', True)
+        
         match = i.re_search_children(r" name ")
         if match:
             for j in match:
-                match2 = re.search(r'name (.*)',j.text)
-                if match2:
-                    print('    name: ' + match2.group(1))
+                search_single(j, r'name (.*)', '    name: ', True)
