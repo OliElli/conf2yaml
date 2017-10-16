@@ -4,6 +4,8 @@ from os import walk, makedirs, listdir
 from os.path import isfile, join, splitext, exists
 import re
 import yaml
+import sys
+import pprint
 
 def match_collection(collection, str):
     for j in collection.children:
@@ -15,6 +17,11 @@ def match_single(j, str, capture):
     match = re.match(str, j.text)
     if match:
         return (match.group(1) if capture else "True")
+
+def match_single_multi(j, str, capture):
+    match = re.search(str, j.text)
+    if match:
+        return match.groups()
 
 def search_collection(collection, str, capture):
     for j in collection:
@@ -33,7 +40,7 @@ def parse(filename, sdir):
     interfaces = p.find_objects(r'interface')                       # Create interfaces object
     output_config = {}                                              # Create master dict for output data
     output_config['interfaces'] = []                                # Create list of interfaces
-    
+
     if interfaces:
         for i in interfaces:
             interface_dict = {}
@@ -63,7 +70,7 @@ def parse(filename, sdir):
                     # port-security
                     port_sec = match_single(j, '^ switchport port-security$', False)
                     if port_sec:
-                        interface_dict['switchport']['mode'] = 'True'
+                        interface_dict['switchport']['port_security'] = 'True'
 
                     # switchport trunk
                     switchport_trunk = match_collection(i, '^ switchport trunk.*$')
@@ -84,7 +91,8 @@ def parse(filename, sdir):
             spanning_tree = match_collection(i, '^ spanning-tree.*$')
             if spanning_tree:
                 # Create spanning-tree sub-dict
-                interface_dict['spanning_tree'] = {}
+                if not 'spanning_tree' in interface_dict.keys():
+                    interface_dict['spanning_tree'] = {}
 
                 for j in i.children:
                     # portfast
@@ -97,48 +105,73 @@ def parse(filename, sdir):
                         interface_dict['spanning_tree']['guard_root'] = guard_root
 
             # ip
-            ip = match_collection(i, '^ .* ip .*$')
+            ip = match_collection(i, '^ ip .*$')
             if ip:
                 # Create ip sub-dict
-                interface_dict['ip'] = {}
+                if not 'ip' in interface_dict.keys():
+                    interface_dict['ip'] = {}
 
                 for j in i.children:
-                    # no ip address
-                    no_ip = match_single(j, '^ no ip address$', False)
-                    if no_ip:
-                        interface_dict['ip']['ip_address_disable'] = no_ip
-                    # no ip route cache
-                    no_route_cache = match_single(j, '^ no ip route-cache$', False)
-                    if no_route_cache:
-                        interface_dict['ip']['route_cache_disable'] = no_route_cache
+
                     # ip address
                     ip_address = match_single(j, '^ ip address (.*)$', True)
                     if ip_address:
                         interface_dict['ip']['address'] = ip_address
                     # ip access_group
-                    access_group = match_single(j, '^ ip access-group (\S+) (\S+)$', False)
+                    access_group = match_single_multi(j, '^ ip access-group (\S+) (\S+)$', True)
                     if access_group:
-                        interface_dict['ip']['access_group'] = access_group
+                        # Create access_group sub-dict
+                        interface_dict['ip']['access_group'] = {}
+                        interface_dict['ip']['access_group'][access_group[0]] = access_group[1]
                     # ip dhcp snooping trust
                     dhcp_snooping_trust = match_single(j, '^ ip dhcp snooping trust$', False)
                     if dhcp_snooping_trust:
                         interface_dict['ip']['dhcp_snooping_trust'] = dhcp_snooping_trust
 
+            # no ip
+            no_ip = match_collection(i, '^ no ip .*$')
+            if no_ip:
+                # Create ip sub-dict
+                if not 'ip' in interface_dict.keys():
+                    interface_dict['ip'] = {}
+
+                    #interface_dict['ip'] = {}
+
+                for j in i.children:
+
+                    # no ip address
+                    no_ip = match_single(j, '^ no ip address$', False)
+                    if no_ip:
+                        interface_dict['ip']['ip_address_disable'] = no_ip
+
+                    # no ip route cache
+                    no_route_cache = match_single(j, '^ no ip route-cache$', False)
+                    if no_route_cache:
+                        interface_dict['ip']['route_cache_disable'] = no_route_cache
+
             # misc
             for j in i.children:
+
+                # description
+                interface_description = match_single(j, '^ description (.*)$', True)
+                if interface_description:
+                    interface_dict['description'] = interface_description
                 # power inline police
                 power_inline_police = match_single(j, '^ power inline police$', False)
                 if power_inline_police:
                     interface_dict['power_inline_police'] = power_inline_police
+                # cdp disable
                 cdp_disable = match_single(j, '^ no cdp enable$', False)
                 if cdp_disable:
                     interface_dict['cdp_disable'] = cdp_disable
+                # shutdown
                 shutdown = match_single(j, '^ shutdown$', False)
                 if shutdown:
                     interface_dict['shutdown'] = shutdown
 
             # Append the completed interface dict to the interfaces list
             output_config['interfaces'].append(interface_dict)
+
 
     # IP Config Elements
     ip_config = p.find_objects(r'ip')
@@ -179,6 +212,10 @@ def parse(filename, sdir):
     if snmp:
         # Create snmp dict
         output_config['snmp'] = {}
+
+        snmp_community = search_collection(snmp, '^snmp-server community (\S+)', True)
+        if snmp_community:
+            output_config['snmp']['community'] = snmp_community
         snmp_location = search_collection(snmp, '^snmp-server location (.*)$', True)
         if snmp_location:
             output_config['snmp']['location'] = snmp_location
@@ -222,12 +259,12 @@ def parse(filename, sdir):
     out_path = 'yaml/' + sdir + '/'
     if not exists(out_path):
         makedirs(out_path)
-    
+
     # Write foo.yml to the subdir in yaml/ that corresponds to the dir where we got the input file in configurations/
     with open(out_path + splitext(filename)[0] + '.yml', 'w') as outfile:
         yaml.dump(output_config, outfile, default_flow_style=False, explicit_start=True)
 
-root_path = 'configurations/'           # specify root directory 
+root_path = 'configurations/'           # specify root directory
 subdirs = walk(root_path).next()[1]     # obtain all subdirectories
 subdirs.append('');                     # add root directory
 
