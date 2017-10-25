@@ -8,326 +8,329 @@ import yaml
 import sys
 import pprint
 
-def match_multi_line(collection, str):
-  for j in collection.children:
-    if re.match(str, j.text):
-      return "True"
-      break
-
-def match_single_line(j, str, capture):
-  match = re.match(str, j.text)
-  if match:
-    return (match.group(1) if capture else "True")
-
-def match_single_line_many(j, str, capture):
-  match = re.search(str, j.text)
-  if match:
-    return match.groups()
-
-def search_multi_line(collection, str, capture):
-  for j in collection:
-    match = re.search(str, j)
-    if match:
-      return (match.group(1) if capture else "True")
-
-def search_single_line(i, str, capture):
-  match = re.search(str, i.text)
-  if match:
-    return (match.group(1) if capture else "True")
-
 # parse takes a filename and subdirectory and creates the corresponding yaml/sdir/filename.yml file
 def parse(filename, sdir):
-  p = CiscoConfParse('configurations/' + sdir + '/' + filename)     # Load in source configuration file
-  output_config = {}                                                # Create master dict for output data
+  parse = CiscoConfParse('configurations/' + sdir + '/' + filename)     # Load in source configuration file
+  output_config = {}                                                    # Create master dict for output data
 
   # switch stacks
-  switch_stack = p.find_objects('^switch [0-9]+ provision')
-  if switch_stack:
-    # Create switch stack sub-dict
-    if not 'switch_stack' in output_config.keys():
-      output_config['switch_stack'] = []
-
-    for i in switch_stack:
-      provision = match_single_line_many(i, '^switch ([0-9]+) provision (.+)$', True)
-      if provision:
-        output_config['switch_stack'].append(provision[1])
+  stacks = parse.find_objects(r'switch [0-9]+ provision (.*)')
+  if stacks:
+    output_config['switch_stack'] = []
+    for line in stacks:
+      stack = line.re_match(r'switch [0-9]+ provision (.*)')
+      output_config['switch_stack'].append(stack)
 
   # Interfaces
-  interfaces = p.find_objects(r'interface')     # Create interfaces object
+  interfaces = parse.find_objects(r'interface')     # Create interfaces object
   if interfaces:
     output_config['interfaces'] = []            # Create list of interfaces
-    for i in interfaces:
+    for interface in interfaces:
+      # dict for this particular interface
       interface_dict = {}
 
       # Insert interface name
-      interface_name = search_single_line(i, '^interface (\S+)$', True)
+      interface_name = interface.re_match(r'^interface (\S+)$')
       if interface_name:
-        interface_dict['name'] = interface_name
+          interface_dict['name'] = interface_name
 
       # switchport
-      switchport = match_multi_line(i, '^ switchport.*$')
-      if switchport:
 
-        # Create switchport sub-dict
-        interface_dict['switchport'] = {}
+      # Find list of interfaces with "switchport" config
+      switchport_interfaces = interface.re_search_children(r'switchport')
+      if switchport_interfaces:
 
-        for j in i.children:
+        # Create switchport dict if it does not yet exist
+        if not 'switchport' in interface_dict:
+          interface_dict['switchport'] = {}
+
+        for line in switchport_interfaces:
 
           # access vlan
-          access_vlan = match_single_line(j, '^ switchport access vlan (\S+)$', True)
+          access_vlan = line.re_match(r' switchport access vlan (\S+)')
           if access_vlan:
-            interface_dict['switchport']['access_vlan'] = str(access_vlan)
+            interface_dict['switchport']['access_vlan'] = access_vlan
 
           # switchport mode
-          mode = match_single_line(j, '^ switchport mode (\S+)$', True)
-          if mode:
-            interface_dict['switchport']['mode'] = mode
+          switchport_mode = line.re_match(r'^ switchport mode (\S+)$')
+          if switchport_mode:
+            interface_dict['switchport']['mode'] = switchport_mode
 
           # port-security
-          port_sec = match_single_line(j, '^ switchport port-security$', False)
+          port_sec = line.re_search(r'^ switchport port-security$')
           if port_sec:
-            interface_dict['switchport']['port_security'] = 'True'
+            interface_dict['switchport']['port_security'] = True
 
           # switchport trunk
-          switchport_trunk = match_multi_line(i, '^ switchport trunk.*$')
+          switchport_trunk = line.re_search(r'^ switchport trunk.*$')
           if switchport_trunk:
-            interface_dict['switchport']['trunk'] = {}
 
-        for j in i.children:
+            # Create the trunk dict if it does not yet exist
+            if not 'trunk' in interface_dict['switchport']:
+              interface_dict['switchport']['trunk'] = {}
 
-          # native vlan
-          native_vlan = match_single_line(j, '^ switchport trunk native vlan (\S+)$', True)
-          if native_vlan:
-            interface_dict['switchport']['trunk']['native_vlan'] = native_vlan
+            # native vlan
+            native_vlan = line.re_match(r'^ switchport trunk native vlan (\S+)$')
+            if native_vlan:
+              interface_dict['switchport']['trunk']['native_vlan'] = native_vlan
 
-          # allowed vlan
-          allowed_vlan = match_single_line(j, '^ switchport trunk allowed vlan (\S+)$', True)
-          if allowed_vlan:
-            interface_dict['switchport']['trunk']['allowed_vlan'] = allowed_vlan
+            # allowed vlan
+            allowed_vlan = line.re_match(r'^ switchport trunk allowed vlan (\S+)$')
+            if allowed_vlan:
+              interface_dict['switchport']['trunk']['allowed_vlan'] = allowed_vlan
 
-          # trunk encapsulation
-          encapsulation = match_single_line(j, '^ switchport trunk encapsulation (.+)$', True)
-          if encapsulation:
-            interface_dict['switchport']['trunk']['encapsulation'] = encapsulation
-
+            # trunk encapsulation
+            encapsulation = line.re_match(r'^ switchport trunk encapsulation (.+)$')
+            if encapsulation:
+              interface_dict['switchport']['trunk']['encapsulation'] = encapsulation
 
       # spanning-tree
-      spanning_tree = match_multi_line(i, '^ spanning-tree.*$')
+      spanning_tree = interface.re_search_children(r'spanning-tree')
       if spanning_tree:
-        # Create spanning-tree sub-dict
-        if not 'spanning_tree' in interface_dict.keys():
+        # Create spanning-tree dict if it does not yet exist
+        if not 'spanning_tree' in interface_dict:
           interface_dict['spanning_tree'] = {}
 
-        for j in i.children:
+        for line in spanning_tree:
+
           # portfast
-          portfast = match_single_line(j, '^ spanning-tree portfast$', False)
+          portfast = line.re_search(r'^ spanning-tree portfast$')
           if portfast:
-            interface_dict['spanning_tree']['portfast'] = portfast
+            interface_dict['spanning_tree']['portfast'] = True
+
           # guard_root
-          guard_root = match_single_line(j, '^ spanning-tree guard root$', False)
+          guard_root = line.re_search(r'^ spanning-tree guard root$')
           if guard_root:
-            interface_dict['spanning_tree']['guard_root'] = guard_root
+            interface_dict['spanning_tree']['guard_root'] = True
 
       # ip
-      ip = match_multi_line(i, '^ ip .*$')
+      ip = interface.re_search_children(r'^ ip ')
       if ip:
-        # Create ip sub-dict
-        if not 'ip' in interface_dict.keys():
+        # Create ip dict if it does not yet exist
+        if not 'ip' in interface_dict:
           interface_dict['ip'] = {}
 
-        for j in i.children:
-
+        for line in ip:
           # ip address
-          ip_address = match_single_line(j, '^ ip address (.*)$', True)
+          ip_address = line.re_search(r'^ ip address (.*)$')
           if ip_address:
             interface_dict['ip']['address'] = ip_address
+
           # ip access_group
-          access_group = match_single_line_many(j, '^ ip access-group (\S+) (\S+)$', True)
+          access_group = re.match('^ ip access-group (\S+) (\S+)$', line.text)
           if access_group:
-            # Create access_group sub-dict
-            interface_dict['ip']['access_group'] = {}
-            interface_dict['ip']['access_group'][access_group[0]] = access_group[1]
+            # Create access_group sub-dict if it does not yet exist
+            if not 'access_group' in interface_dict['ip']:
+              interface_dict['ip']['access_group'] = {}
+
+            interface_dict['ip']['access_group'][access_group.group(1)] = access_group.group(2)
+
           # ip dhcp snooping trust
-          dhcp_snooping_trust = match_single_line(j, '^ ip dhcp snooping trust$', False)
+          dhcp_snooping_trust = line.re_search(r'^ ip dhcp snooping trust$')
           if dhcp_snooping_trust:
-            interface_dict['ip']['dhcp_snooping_trust'] = dhcp_snooping_trust
+            interface_dict['ip']['dhcp_snooping_trust'] = True
 
       # no ip
-      no_ip = match_multi_line(i, '^ no ip .*$')
+      no_ip = interface.re_search_children(r'^ no ip ')
+
       if no_ip:
-        # Create ip sub-dict
-        if not 'ip' in interface_dict.keys():
+        # Create ip dict if it does not yet exist
+        if not 'ip' in interface_dict:
           interface_dict['ip'] = {}
 
-          #interface_dict['ip'] = {}
-
-        for j in i.children:
+        for line in no_ip:
 
           # no ip address
-          no_ip = match_single_line(j, '^ no ip address$', False)
+          no_ip = line.re_search(r'^ no ip address$')
           if no_ip:
-            interface_dict['ip']['ip_address_disable'] = no_ip
+            interface_dict['ip']['ip_address_disable'] = True
 
           # no ip route cache
-          no_route_cache = match_single_line(j, '^ no ip route-cache$', False)
+          no_route_cache = line.re_search(r'^ no ip route-cache$')
           if no_route_cache:
-            interface_dict['ip']['route_cache_disable'] = no_route_cache
+            interface_dict['ip']['route_cache_disable'] = True
 
           # no ip mroute-cache
-          no_mroute_cache = match_single_line(j, '^ no ip mroute-cache$', False)
+          no_mroute_cache = line.re_search(r'^ no ip mroute-cache$')
           if no_mroute_cache:
-            interface_dict['ip']['mroute_cache_disable'] = no_mroute_cache
+            interface_dict['ip']['mroute_cache_disable'] = True
+
+      # ipv6
+      ipv6 = interface.re_search_children(r'^ ipv6 ')
+      if ipv6:
+        if not 'ipv6' in interface_dict:
+          interface_dict['ipv6'] = []
+
+        for line in ipv6:
+          # ra guard
+          ra_guard = line.re_search(r'^ ipv6 nd raguard$')
+          if ra_guard:
+            interface_dict['ipv6'].append('ra_guard')
+
+          # ipv6 snooping
+          ra_guard = line.re_search(r'^ ipv6 snooping$')
+          if ra_guard:
+            interface_dict['ipv6'].append('ipv6_snooping')
+
+          # ipv6 dhcp guard
+          ra_guard = line.re_search(r'^ ipv6 dhcp guard$')
+          if ra_guard:
+            interface_dict['ipv6'].append('ipv6_dhcp_guard')
 
       # misc
-      for j in i.children:
+      misc = interface.re_search_children(r'.*')
 
-        # description
-        interface_description = match_single_line(j, '^ description (.*)$', True)
-        if interface_description:
-          interface_dict['description'] = interface_description
+      if misc:
+        for line in misc:
 
-        # power inline police
-        power_inline_police = match_single_line(j, '^ power inline police$', False)
-        if power_inline_police:
-          interface_dict['power_inline_police'] = power_inline_police
+          # description
+          interface_description = line.re_match(r'^ description (\S+)$')
+          if interface_description:
+            interface_dict['description'] = interface_description
 
-        # cdp disable
-        cdp_disable = match_single_line(j, '^ no cdp enable$', False)
-        if cdp_disable:
-          interface_dict['cdp_disable'] = cdp_disable
+          # power inline police
+          power_inline_police = line.re_search(r'^ power inline police$')
+          if power_inline_police:
+            interface_dict['power_inline_police'] = True
 
-        # shutdown
-        shutdown = match_single_line(j, '^ shutdown$', False)
-        if shutdown:
-          interface_dict['shutdown'] = shutdown
+          # cdp disable
+          cdp_disable = line.re_search(r'^ no cdp enable$')
+          if cdp_disable:
+            interface_dict['cdp_disable'] = True
 
-        # vrf forwarding
-        vrf = match_single_line(j, '^ vrf forwarding (.+)$', True)
-        if vrf:
-          interface_dict['vrf'] = vrf
+          # shutdown
+          shutdown = line.re_search(r'^ shutdown$')
+          if shutdown:
+            interface_dict['shutdown'] = True
 
-        # negotiation
-        negotiation = match_single_line(j, '^ negotiation (.+)$', True)
-        if negotiation:
-          interface_dict['negotiation'] = negotiation
+          # vrf forwarding
+          vrf = line.re_match(r'^ vrf forwarding (.+)$')
+          if vrf:
+            interface_dict['vrf'] = vrf
 
-        # keepalive disable
-        keepalive_disable = match_single_line(j, '^ no keepalive$', False)
-        if keepalive_disable:
-          interface_dict['keepalive_disable'] = keepalive_disable
+          # negotiation
+          negotiation = line.re_match(r'^ negotiation (.+)$')
+          if negotiation:
+            interface_dict['negotiation'] = negotiation
+
+          # keepalive disable
+          keepalive_disable = line.re_search(r'^ no keepalive$')
+          if keepalive_disable:
+            interface_dict['keepalive_disable'] = True
 
       # Append the completed interface dict to the interfaces list
       output_config['interfaces'].append(interface_dict)
 
   # IP Config Elements
-  ip_config = p.find_objects(r'ip')
+  ip_config = parse.find_objects(r'ip')
   if ip_config:
-    # Create ip dict
-    output_config['ip'] = {}
-    for i in ip_config:
+    # Create ip dict if it does not yet exist
+    if not 'ip' in output_config:
+      output_config['ip'] = {}
+
+    for line in ip_config:
+
       # ip dhcp snooping
-      dhcp_snooping = match_single_line(i, '^ip dhcp snooping$', False)
+      dhcp_snooping = line.re_search(r'^ip dhcp snooping$')
       if dhcp_snooping:
-        output_config['ip']['dhcp_snooping'] = dhcp_snooping
-      default_gateway = match_single_line(i, '^ip default-gateway (\S+)$', True)
+        output_config['ip']['dhcp_snooping'] = True
+
+      # ip default gateway
+      default_gateway = line.re_match(r'^ip default-gateway (\S+)$')
       if default_gateway:
         output_config['ip']['default_gateway'] = default_gateway
 
   # Banner
-  banner = p.find_blocks(r'banner')
+  banner = parse.find_blocks(r'banner')
   if banner:
-    # Create banner dict
-    output_config['banner'] = []
+    # Create banner dict if it does not yet exist
+    if not 'banner' in output_config:
+      output_config['banner'] = []
 
-    for i in banner:
-      match = re.search('^banner motd (.*)$', i)
-      if match:
-        output_config['banner'].append(match.group(1))
+    for line in banner:
+      first_line = re.search(r'^banner motd (.*)$', line)
+      if first_line:
+        output_config['banner'].append(first_line.group(1))
       else:
-        output_config['banner'].append(i)
+        output_config['banner'].append(line)
 
   # acl
-  acl = p.find_blocks(r'access-list')
+  acl = parse.find_blocks(r'access-list')
   if acl:
-    acl_line = search_multi_line(acl, '^access-list 10 permit (172.*)$', True)
-    if acl_line:
-      output_config['acl'] = acl_line
+    if not 'acl' in output_config:
+      output_config['acl'] = []
+
+    for line in acl:
+      acl_line = re.search(r'^access-list 10 permit (172.*)$', line)
+      if acl_line:
+        output_config['acl'].append(acl_line.group(1))
 
   # snmp-server
-  snmp = p.find_blocks(r'snmp-server')
+  snmp = parse.find_blocks(r'snmp-server')
   if snmp:
-    # Create snmp dict
-    output_config['snmp'] = {}
+    # Create snmp dict if it does not yet exist
+    if not 'snmp' in output_config:
+      output_config['snmp'] = {}
 
-    snmp_community = search_multi_line(snmp, '^snmp-server community (\S+)', True)
-    if snmp_community:
-      output_config['snmp']['community'] = snmp_community
-    snmp_location = search_multi_line(snmp, '^snmp-server location (.*)$', True)
-    if snmp_location:
-      output_config['snmp']['location'] = snmp_location
-    snmp_contact = search_multi_line(snmp, '^snmp-server contact (.*)$', True)
-    if snmp_contact:
-      output_config['snmp']['contact'] = snmp_contact
+    for line in snmp:
+
+      # community string
+      snmp_community = re.match(r'^snmp-server community (\S+)', line)
+      if snmp_community:
+        output_config['snmp']['community'] = snmp_community.group(1)
+
+      # location
+      snmp_location = re.match(r'^snmp-server location (.*)$', line)
+      if snmp_location:
+        output_config['snmp']['location'] = snmp_location.group(1)
+
+      # contact
+      snmp_contact = re.match(r'^snmp-server contact (.*)$', line)
+      if snmp_contact:
+        output_config['snmp']['contact'] = snmp_contact.group(1)
 
   # vtp
-  vtp = p.find_blocks(r'vtp')
+  vtp = parse.find_lines(r'vtp')
   if vtp:
-    vtp_mode = search_multi_line(vtp, 'vtp mode (\S+)', True)
+    vtp_mode = re.match(r'vtp mode (\S+)',vtp[0])
     if vtp_mode:
-      output_config['vtp_mode'] = vtp_mode
+      output_config['vtp_mode'] = vtp_mode.group(1)
 
   # vlans
-  vlans = p.find_objects('^vlan')
+  vlans = parse.find_objects('^vlan [0-9]+')
   if vlans:
-    output_config['vlans'] = []
-    for i in vlans:
-      match = re.match('^vlan (\d.*)$', i.text)
-      if match:
-        # Create vlans dict
-        vlan_output = {}
-        vlan_output['number'] = match.group(1)
-        match2 = i.re_search_children(r" name ")
-        if match2:
-          for j in match2:
-            match3 = re.match('^ name (\S+)$', j.text)
-            if match3:
-              vlan_output['name'] = match3.group(1)
-        # Append the completed vlans dict to the output_config list
-        output_config['vlans'].append(vlan_output)
+    # Create vlans dict if it does not yet exist
+    if not 'vlans' in output_config:
+      output_config['vlans'] = []
+
+    for vlan in vlans:
+      vlan_dict = {}
+
+      # vlan number
+      vlan_number = re.match('^vlan (\d.*)$', vlan.text)
+      if vlan_number:
+        vlan_dict['number'] = vlan_number.group(1)
+
+      # vlan name
+      vlan_name = vlan.re_search_children(r'name')
+      if vlan_name:
+        name = vlan_name[0].re_match(r' name (\S+)')
+        vlan_dict['name'] = name
+
+      # Append the completed vlan dict
+      output_config['vlans'].append(vlan_dict)
 
   # certificates
-  certificate_chain = p.find_lines('^crypto pki certificate chain')
+  certificate_chain = parse.find_lines('^crypto pki certificate chain')
   if certificate_chain:
     for line in certificate_chain:
       certificate_chain_search = re.match('^crypto pki certificate chain (\S+)', line)
       output_config['crypto_chain_id'] = certificate_chain_search.group(1)
 
-  # radius
-  radius_servers = p.find_objects('radius server')
+  # radius server config
+  radius_servers = parse.find_objects('radius server')
   if radius_servers:
-    output_config['radius_servers'] = []
-    for line in radius_servers:
-      match = re.match('radius server (\S+)', line.text)
-      output_config['radius_servers'].append(match.group(1))
-
-    #   search_term = 'radius server ' + radius_server_name
-      address_line = p.find_children_w_parents(line.text, 'address ipv4')
-      if address_line:
-        match = re.match(' address ipv4 (\S+) auth-port ([0-9]+) acct-port ([0-9]+)', address_line[0])
-        if match:
-          address = match.group(1)
-          auth_port = match.group(2)
-          acct_port = match.group(3)
-
-          print('DEBUG')
-          print(address)
-          print(auth_port)
-          print(acct_port)
-          sys.exit
-
-
-
-
+    output_config['radius_servers'] = True
 
   # Screen output
   # print
