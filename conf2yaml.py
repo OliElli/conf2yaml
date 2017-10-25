@@ -8,9 +8,9 @@ import yaml
 import sys
 import pprint
 
-# parse takes a filename and subdirectory and creates the corresponding yaml/sdir/filename.yml file
-def parse(filename, sdir):
-  parse = CiscoConfParse('configurations/' + sdir + '/' + filename)     # Load in source configuration file
+# parse takes a filename and subdirectory and creates the corresponding yaml/subdir/filename.yml file
+def parse(filename, subdir):
+  parse = CiscoConfParse('configurations/' + subdir + '/' + filename)     # Load in source configuration file
   output_config = {}                                                    # Create master dict for output data
 
   # switch stacks
@@ -112,7 +112,7 @@ def parse(filename, sdir):
 
         for line in ip:
           # ip address
-          ip_address = line.re_search(r'^ ip address (.*)$')
+          ip_address = line.re_match(r'^ ip address (.*)$')
           if ip_address:
             interface_dict['ip']['address'] = ip_address
 
@@ -307,7 +307,7 @@ def parse(filename, sdir):
       vlan_dict = {}
 
       # vlan number
-      vlan_number = re.match('^vlan (\d.*)$', vlan.text)
+      vlan_number = re.match('^vlan ([0-9]+)$', vlan.text)
       if vlan_number:
         vlan_dict['number'] = vlan_number.group(1)
 
@@ -330,17 +330,17 @@ def parse(filename, sdir):
   # radius server config
   radius_servers = parse.find_objects('radius server')
   if radius_servers:
-    output_config['radius_servers'] = True
+    output_config['dot1x'] = True
 
   # Screen output
   # print
-  # print(sdir + '/' + filename + ' YAML Output:')
+  # print(subdir + '/' + filename + ' YAML Output:')
   # print
   # print yaml.dump(output_config, default_flow_style=False, explicit_start=True)
   print('Outputing ' + filename + ' YAML')
 
   # Make sure the directory we're trying to write to exists. Create it if it doesn't
-  out_path = 'yaml/' + sdir + '/'
+  out_path = 'yaml/' + subdir + '/'
   if not exists(out_path):
     makedirs(out_path)
 
@@ -352,8 +352,8 @@ root_path = 'configurations/'       # specify root directory
 subdirs = walk(root_path).next()[1]   # obtain all subdirectories
 subdirs.append('');           # add root directory
 
-for s in subdirs:
-  files = [f for f in listdir(root_path + s) if isfile(join(root_path + s, f))]
-  for f in files:
-    if f != '.gitignore':       # let's not try to parse gitignores
-      parse(f, s)
+for subdir in subdirs:
+  files = [filename for filename in listdir(root_path + subdir) if isfile(join(root_path + subdir, filename))]
+  for filename in files:
+    if filename != '.gitignore':       # let's not try to parse gitignores
+      parse(filename, subdir)
