@@ -11,6 +11,7 @@ def main():
   # Permit limited configuration via command-line args
   debug = False                         # Debug YAML to console defaults to off: enable with --debug
   root_path = 'configurations/'         # Root dir is 'configurations': modify with --root="mydir"
+  domain = 'nwid.bris.ac.uk'            # Default domain is 'nwid.bris.ac.uk': modify with --domain="mydomain"
   if (len(sys.argv) > 1):
     for arg in sys.argv:
       if arg == '--debug':
@@ -19,6 +20,10 @@ def main():
         head, sep, directory_value = arg.partition('=')
         if directory_value != '':
           root_path = directory_value.replace('"', '') + '/'
+      if arg[:8] == '--domain':
+        head, sep, domain_value = arg.partition('=')
+        if domain_value != '':
+          domain = domain_value.replace('"', '')
   
   subdirs = walk(root_path).next()[1]   # obtain all subdirectories
   subdirs.append('')                    # add root directory
@@ -30,10 +35,11 @@ def main():
       if filename != '.gitignore':                                              # Do not parse .gitignores
         input = CiscoConfParse(root_path + subdir + '/' + filename)             # Get our CiscoConfParse-formatted input
         output_yaml = convert_to_yaml(input)                                    # Parse input config into output YAML
-        print('Outputting ' + filename + ' YAML')
-        write_output_yaml_to_file(output_yaml, filename, root_path, subdir)     # Write our YAML to disk
+        output_path = 'yaml/' + root_path + subdir
+        print('Outputting ' + output_path + splitext(filename)[0] + '.' + domain + '.yml YAML')
+        write_output_yaml_to_file(output_yaml, output_path, filename, domain)   # Write our YAML to disk
         if (debug):                                                             # If debug mode specified output YAML to console
-          print(root_dir + '/' + subdir + '/' + filename + ' YAML Output:')
+          print(output_path + splitext(filename)[0] + '.' + domain + '.yml YAML Output:')
           print output_yaml
 
 
@@ -362,14 +368,13 @@ def convert_to_yaml(input_config):
 
   return yaml.dump(output_config, default_flow_style = 0, explicit_start = 1)
 
-def write_output_yaml_to_file(output_yaml, filename, root_path, subdir):
+def write_output_yaml_to_file(output_yaml, output_path, filename, domain):
   # Make sure the directory we're trying to write to exists. Create it if it doesn't
-  out_path = 'yaml/' + root_path + '/' + subdir + '/'
-  if not exists(out_path):
-    makedirs(out_path)
+  if not exists(output_path):
+    makedirs(output_path)
 
   # Write foo.yml to the subdir in yaml/root_path that corresponds to where we got the input file
-  with open(out_path + splitext(filename)[0] + '.nwid.bris.ac.uk.yml', 'w') as outfile:
+  with open(output_path + splitext(filename)[0] + '.' + domain + '.yml', 'w') as outfile:
     outfile.write(output_yaml)
 
 if __name__ == '__main__':
