@@ -3,18 +3,46 @@
 from ciscoconfparse import CiscoConfParse
 from os import walk, makedirs, listdir
 from os.path import isfile, join, splitext, exists
-import re
-import yaml
-import sys
-import pprint
+import re, yaml, sys, pprint
 
-# parse takes a filename and subdirectory and creates the corresponding yaml/subdir/filename.yml file
-def parse(filename, subdir):
-  parse = CiscoConfParse('configurations/' + subdir + '/' + filename)     # Load in source configuration file
-  output_config = {}                                                    # Create master dict for output data
+# Explicitly specify entry point for clarity's sake
+def main():
+
+  # Permit limited configuration via command-line args
+  debug = False                         # Debug YAML to console defaults to off: enable with --debug
+  root_path = 'configurations/'         # Root dir is 'configurations': modify with --root="mydir"
+  if (len(sys.argv) > 1):
+    for arg in sys.argv:
+      if arg == '--debug':
+        debug = True
+      if arg[:6] == '--root':
+        head, sep, directory_value = arg.partition('=')
+        if directory_value != '':
+          root_path = directory_value.replace('"', '') + '/'
+  
+  subdirs = walk(root_path).next()[1]   # obtain all subdirectories
+  subdirs.append('')                    # add root directory
+
+  # Parse all files in all subdirectories
+  for subdir in subdirs:
+    files = [filename for filename in listdir(root_path + subdir) if isfile(join(root_path + subdir, filename))]
+    for filename in files:
+      if filename != '.gitignore':                                              # Do not parse .gitignores
+        input = CiscoConfParse(root_path + subdir + '/' + filename)             # Get our CiscoConfParse-formatted input
+        output_yaml = convert_to_yaml(input)                                    # Parse input config into output YAML
+        print('Outputting ' + filename + ' YAML')
+        write_output_yaml_to_file(output_yaml, filename, root_path, subdir)     # Write our YAML to disk
+        if (debug):                                                             # If debug mode specified output YAML to console
+          print(root_dir + '/' + subdir + '/' + filename + ' YAML Output:')
+          print output_yaml
+
+
+# The workhorse function that reads the Cisco config and returns our output config object
+def convert_to_yaml(input_config):
+  output_config = {} # Create master dict for output data
 
   # switch stacks
-  stacks = parse.find_objects(r'switch [0-9]+ provision (.*)')
+  stacks = input_config.find_objects(r'switch [0-9]+ provision (.*)')
   if stacks:
     output_config['switch_stack'] = []
     for line in stacks:
@@ -22,7 +50,7 @@ def parse(filename, subdir):
       output_config['switch_stack'].append(stack)
 
   # Interfaces
-  interfaces = parse.find_objects(r'interface')     # Create interfaces object
+  interfaces = input_config.find_objects(r'interface')     # Create interfaces object
   if interfaces:
     output_config['interfaces'] = []            # Create list of interfaces
     for interface in interfaces:
@@ -222,7 +250,7 @@ def parse(filename, subdir):
       output_config['interfaces'].append(interface_dict)
 
   # IP Config Elements
-  ip_config = parse.find_objects(r'ip')
+  ip_config = input_config.find_objects(r'ip')
   if ip_config:
     # Create ip dict if it does not yet exist
     if not 'ip' in output_config:
@@ -241,7 +269,7 @@ def parse(filename, subdir):
         output_config['ip']['default_gateway'] = default_gateway
 
   # Banner
-  banner = parse.find_blocks(r'banner')
+  banner = input_config.find_blocks(r'banner')
   if banner:
     # Create banner dict if it does not yet exist
     if not 'banner' in output_config:
@@ -255,7 +283,7 @@ def parse(filename, subdir):
         output_config['banner'].append(line)
 
   # acl
-  acl = parse.find_blocks(r'access-list')
+  acl = input_config.find_blocks(r'access-list')
   if acl:
     if not 'acl' in output_config:
       output_config['acl'] = []
@@ -266,7 +294,7 @@ def parse(filename, subdir):
         output_config['acl'].append(acl_line.group(1))
 
   # snmp-server
-  snmp = parse.find_blocks(r'snmp-server')
+  snmp = input_config.find_blocks(r'snmp-server')
   if snmp:
     # Create snmp dict if it does not yet exist
     if not 'snmp' in output_config:
@@ -290,14 +318,14 @@ def parse(filename, subdir):
         output_config['snmp']['contact'] = snmp_contact.group(1)
 
   # vtp
-  vtp = parse.find_lines(r'vtp')
+  vtp = input_config.find_lines(r'vtp')
   if vtp:
     vtp_mode = re.match(r'vtp mode (\S+)',vtp[0])
     if vtp_mode:
       output_config['vtp_mode'] = vtp_mode.group(1)
 
   # vlans
-  vlans = parse.find_objects('^vlan [0-9]+')
+  vlans = input_config.find_objects('^vlan [0-9]+')
   if vlans:
     # Create vlans dict if it does not yet exist
     if not 'vlans' in output_config:
@@ -321,39 +349,28 @@ def parse(filename, subdir):
       output_config['vlans'].append(vlan_dict)
 
   # certificates
-  certificate_chain = parse.find_lines('^crypto pki certificate chain')
+  certificate_chain = input_config.find_lines('^crypto pki certificate chain')
   if certificate_chain:
     for line in certificate_chain:
       certificate_chain_search = re.match('^crypto pki certificate chain (\S+)', line)
       output_config['crypto_chain_id'] = certificate_chain_search.group(1)
 
   # radius server config
-  radius_servers = parse.find_objects('radius server')
+  radius_servers = input_config.find_objects('radius server')
   if radius_servers:
     output_config['dot1x'] = True
 
-  # Screen output
-  # print
-  # print(subdir + '/' + filename + ' YAML Output:')
-  # print
-  # print yaml.dump(output_config, default_flow_style=False, explicit_start=True)
-  print('Outputing ' + filename + ' YAML')
+  return yaml.dump(output_config, default_flow_style = 0, explicit_start = 1)
 
+def write_output_yaml_to_file(output_yaml, filename, root_path, subdir):
   # Make sure the directory we're trying to write to exists. Create it if it doesn't
-  out_path = 'yaml/' + subdir + '/'
+  out_path = 'yaml/' + root_path + '/' + subdir + '/'
   if not exists(out_path):
     makedirs(out_path)
 
-  # Write foo.yml to the subdir in yaml/ that corresponds to the dir where we got the input file in configurations/
+  # Write foo.yml to the subdir in yaml/root_path that corresponds to where we got the input file
   with open(out_path + splitext(filename)[0] + '.nwid.bris.ac.uk.yml', 'w') as outfile:
-    yaml.dump(output_config, outfile, default_flow_style=False, explicit_start=True)
+    outfile.write(output_yaml)
 
-root_path = 'configurations/'       # specify root directory
-subdirs = walk(root_path).next()[1]   # obtain all subdirectories
-subdirs.append('');           # add root directory
-
-for subdir in subdirs:
-  files = [filename for filename in listdir(root_path + subdir) if isfile(join(root_path + subdir, filename))]
-  for filename in files:
-    if filename != '.gitignore':       # let's not try to parse gitignores
-      parse(filename, subdir)
+if __name__ == '__main__':
+  main()
