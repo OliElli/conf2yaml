@@ -19,7 +19,7 @@ Place Cisco switch config files into `/configurations`. Run the script and YAML 
 
 * Specify an alternative directory for a set of Cisco configs with `--root="foo"`. Output will be generated in `/yaml/foo`.
 * Output YAML directly to terminal with `--debug`.
-* Override default domain appended to YAML files with `--domain`.
+* Override default domain appended to YAML files with `--domain="foo"`.
 
 ## Tests
 
